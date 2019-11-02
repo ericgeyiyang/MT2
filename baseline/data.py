@@ -136,7 +136,7 @@ class MTDataset(data.Dataset):
         ]
 
     def __getitem__(self, i):
-        return self.src_idxs[i], self.tgt_idxs[i]
+        return self.src_txt[i], self.tgt_txt[i], self.src_idxs[i], self.tgt_idxs[i]
 
     def __len__(self):
         return self.length
@@ -169,7 +169,7 @@ class MTDataLoader(data.DataLoader):
         pointer = 0
         while pointer < N:
             idx = self.order[pointer]
-            src, tgt = self.dataset[idx]
+            _, _, src, tgt = self.dataset[idx]
             # Check whether adding this sample would bring us over
             # the size limit
             batch_size += 1
@@ -205,13 +205,15 @@ class MTDataLoader(data.DataLoader):
 
     def get_batch(self, pos):
         samples = [self.dataset[i] for i in self.batches[pos]]
-        src_sents = [src for src, _ in samples]
-        tgt_sents = [tgt for _, tgt in samples]
+        src_txt = [src_t for src_t, _, _, _ in samples]
+        tgt_txt = [tgt_t for _, tgt_t, _, _ in samples]
+        src_sents = [src for _, _, src, _ in samples]
+        tgt_sents = [tgt for _, _, _, tgt in samples]
         # Input tensor
         pad_idx = self.dataset.vocab["<pad>"]
         src_tokens, src_mask = _make_masked_tokens(src_sents, pad_idx)
         tgt_tokens, tgt_mask = _make_masked_tokens(tgt_sents, pad_idx)
-        return src_tokens, src_mask, tgt_tokens, tgt_mask
+        return src_txt, tgt_txt, src_tokens, src_mask, tgt_tokens, tgt_mask
 
     def __next__(self):
         if self.pos >= len(self.batches):

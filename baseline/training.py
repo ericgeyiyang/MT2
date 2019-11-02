@@ -3,8 +3,12 @@ import argparse
 from math import sqrt, exp
 import torch as th
 from data import MTDataset, MTDataLoader, Vocab
+from subwords import desegment
+from decoding import greedy
 from transformer import Transformer
 from tqdm import tqdm
+from sacrebleu import corpus_bleu
+import pdb
 
 
 def load_data(src_lang, tgt_lang, cached_folder="assignment2/data", overwrite=False):
@@ -14,15 +18,17 @@ def load_data(src_lang, tgt_lang, cached_folder="assignment2/data", overwrite=Fa
         base_folder = os.path.join(
             "assignment2",
             "data",
-            f"{src_lang}_{tgt_lang}"
+            f"{src_lang}_{tgt_lang}" if src_lang == 'en' else f"{tgt_lang}_{src_lang}"
         )
         train_prefix = os.path.join(
             base_folder,
-            f"{src_lang}{tgt_lang}_parallel.bpe.train"
+            f"{src_lang}{tgt_lang}_parallel.bpe.train" if src_lang == "en" \
+                else f"{tgt_lang}{src_lang}_parallel.bpe.train"
         )
         dev_prefix = os.path.join(
             base_folder,
-            f"{src_lang}{tgt_lang}_parallel.bpe.dev"
+            f"{src_lang}{tgt_lang}_parallel.bpe.dev" if src_lang == "en" \
+                else f"{tgt_lang}{src_lang}_parallel.bpe.dev"
         )
         vocab = Vocab.from_data_files(
             f"{train_prefix}.{src_lang}",
@@ -41,9 +47,9 @@ def get_args():
     parser = argparse.ArgumentParser("Train an MT model")
     # General params
     parser.add_argument("--seed", type=int, default=11731)
-    parser.add_argument("--src", type=str, default="en", choices=["en"])
+    parser.add_argument("--src", type=str, default="en", choices=["af", "ts", "nso","en"])
     parser.add_argument("--tgt", type=str, default="af",
-                        choices=["af", "ts", "nso"])
+                        choices=["af", "ts", "nso", "en"])
     parser.add_argument("--model-file", type=str, default="model.pt")
     parser.add_argument("--overwrite-model", action="store_true")
     parser.add_argument("--cuda", action="store_true")
@@ -90,7 +96,7 @@ def train_epoch(model, optim, dataloader, lr_schedule=None, clip_grad=5.0):
         optim.zero_grad()
         itr.total = len(dataloader)
         # Cast input to device
-        batch = move_to_device(batch, device)
+        batch = move_to_device(batch[2:], device)
         # Various inputs
         src_tokens, src_mask, tgt_tokens, tgt_mask = batch
         # Get log probs
@@ -126,16 +132,20 @@ def train_epoch(model, optim, dataloader, lr_schedule=None, clip_grad=5.0):
         itr.set_postfix(loss=f"{nll.item():.3f}", ppl=f"{ppl:.2f}")
 
 
-def evaluate_ppl(model, dataloader):
+def evaluate_ppl(model, dataloader, epoch):
     model.eval()
     # Model device
     device = list(model.parameters())[0].device
     # total tokens
     tot_tokens = tot_nll = 0
     # Iterate over batches
+    bleu = 0
+    translated = []
+    ground_truth = []
     for batch in tqdm(dataloader):
         # Cast input to device
-        batch = move_to_device(batch, device)
+        src_txt, tgt_txt = batch[0], batch[1]
+        batch = move_to_device(batch[2:], device)
         # Various inputs
         src_tokens, src_mask, tgt_tokens, tgt_mask = batch
         with th.no_grad():
@@ -161,7 +171,18 @@ def evaluate_ppl(model, dataloader):
             # Keep track
             tot_nll += nll.item()
             tot_tokens += n_tokens
-    return exp(tot_nll / tot_tokens)
+            # for src_line, tgt_line in zip(src_txt, tgt_txt):
+            #     in_words = src_line.strip().split()
+            #     src_tokens = [model.vocab[word] for word in in_words]
+            #     out_tokens = greedy(model, src_tokens)
+            #     # Convert back to strings
+            #     out_tokens = [model.vocab[tok] for tok in out_tokens]
+            #     translated_sentence = desegment(out_tokens)
+            #     translated.append(translated_sentence)
+            #     ground_truth.append(desegment(tgt_line.strip().split()[1:-1]))
+    # bleu = corpus_bleu(translated, [ground_truth])
+    # return bleu, exp(tot_nll / tot_tokens)
+    return 0, exp(tot_nll / tot_tokens)
 
 
 def main():
@@ -220,8 +241,9 @@ def main():
                         lr_schedule, args.clip_grad)
             # Check dev ppl
             model.eval()
-            valid_ppl = evaluate_ppl(model, valid_loader)
+            valid_bleu, valid_ppl = evaluate_ppl(model, valid_loader, epoch)
             print(f"Validation perplexity: {valid_ppl:.2f}", flush=True)
+            # print(f"Validation bleu: {valid_bleu:.4f}", flush=True)
             # Early stopping maybe
             if valid_ppl < best_ppl:
                 best_ppl = valid_ppl

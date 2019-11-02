@@ -12,9 +12,9 @@ from subwords import desegment
 def get_args():
     parser = argparse.ArgumentParser("Translate with an MT model")
     # General params
-    parser.add_argument("--src", type=str, default="en", choices=["en"])
+    parser.add_argument("--src", type=str, default="en", choices=["en", "af", "ts", "nso"])
     parser.add_argument("--tgt", type=str, default="af",
-                        choices=["af", "ts", "nso"])
+                        choices=["en", "af", "ts", "nso"])
     parser.add_argument("--model-file", type=str,
                         default="model.pt", required=True)
     parser.add_argument("--input-file", type=str, default=None)
