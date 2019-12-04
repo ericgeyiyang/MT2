@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Prepare BPE
 for lang in af nso ts
 do
