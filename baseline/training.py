@@ -3,14 +3,11 @@ import argparse
 from math import sqrt, exp
 import torch as th
 from data import MTDataset, MTDataLoader, Vocab
-from subwords import desegment
-from decoding import greedy
 from transformer import Transformer
 from tqdm import tqdm
-from sacrebleu import corpus_bleu
 import pdb
 
-
+# 3:2: 31.77, 1:1: 30.31
 def load_data(src_lang, tgt_lang, cached_folder="assignment2/data", overwrite=False):
     """Load data (and cache to file)"""
     cached_file = os.path.join(cached_folder, f"{src_lang}-{tgt_lang}.pt")
@@ -69,6 +66,7 @@ def get_args():
     parser.add_argument("--clip-grad", type=float, default=1.0)
     parser.add_argument("--tokens-per-batch", type=int, default=8000)
     parser.add_argument("--samples-per-batch", type=int, default=128)
+    parser.add_argument("--label-smoothing", type=float, default=0.1)
     return parser.parse_args()
 
 
@@ -86,8 +84,32 @@ def inverse_sqrt_schedule(warmup, lr0):
         step += 1
         yield lr0 * scale
 
+# reference from https://github.com/OpenNMT/OpenNMT-py/blob/e8622eb5c6117269bb3accd8eb6f66282b5e67d9/onmt/utils/loss.py#L186
+class LabelSmoothingLoss(th.nn.Module):
+    def __init__(self, label_smoothing, target_vocab_size, ignore_index=-1):
+        self.ignore_index = ignore_index
+        super(LabelSmoothingLoss, self).__init__()
+        # label_smoothing is a small value
+        smoothing_value = label_smoothing / (target_vocab_size - 1)
+        one_hot = th.full((target_vocab_size, ), smoothing_value)
+        self.register_buffer("one_hot", one_hot.unsqueeze(0))
 
-def train_epoch(model, optim, dataloader, lr_schedule=None, clip_grad=5.0):
+        self.confidence = 1 - label_smoothing
+
+    def forward(self, output, target):
+        """
+        output (FloatTensor): (batch_size x sentence_len) x n_classes
+        target (LongTensor): (batch_size x sentence_len)
+        """
+        model_prob = self.one_hot.repeat(target.size(0), 1)
+        model_prob.scatter_(1, target.unsqueeze(1), self.confidence)
+        model_prob.masked_fill_((target == self.ignore_index).unsqueeze(1), 0)
+
+        return th.nn.functional.kl_div(output, model_prob, reduction='sum')
+
+
+
+def train_epoch(model, optim, dataloader, criterion, lr_schedule=None, clip_grad=5.0):
     # Model device
     device = list(model.parameters())[0].device
     # Iterate over batches
@@ -104,16 +126,21 @@ def train_epoch(model, optim, dataloader, lr_schedule=None, clip_grad=5.0):
         # Negative log likelihood of the target tokens
         # (this selects log_p[i, b, tgt_tokens[i+1, b]]
         # for each batch b, position i)
-        nll = th.nn.functional.nll_loss(
-            # Log probabilities (flattened to (l*b) x V)
+        nll = criterion(
             log_p.view(-1, log_p.size(-1)),
-            # Target tokens (we start from the 1st real token, ignoring <sos>)
             tgt_tokens[1:].view(-1),
-            # Don't compute the nll of padding tokens
-            ignore_index=model.vocab["<pad>"],
-            # Take the average
-            reduction="mean",
         )
+        nll /= sum(tgt_tokens[1:].view(-1)!=0)
+        # nll = th.nn.functional.nll_loss(
+        #     # Log probabilities (flattened to (l*b) x V)
+        #     log_p.view(-1, log_p.size(-1)),
+        #     # Target tokens (we start from the 1st real token, ignoring <sos>)
+        #     tgt_tokens[1:].view(-1),
+        #     # Don't compute the nll of padding tokens
+        #     ignore_index=model.vocab["<pad>"],
+        #     # Take the average
+        #     reduction="mean",
+        # )
         # Perplexity (for logging)
         ppl = th.exp(nll).item()
         # Backprop
@@ -233,25 +260,30 @@ def main():
     else:
         # Train epochs
         best_ppl = 1e12
+        criterion = LabelSmoothingLoss(args.label_smoothing, len(vocab), ignore_index=vocab['<pad>'])
+        if args.cuda:
+            criterion = criterion.cuda()
         for epoch in range(1, args.n_epochs+1):
-            print(f"----- Epoch {epoch} -----", flush=True)
-            # Train for one epoch
-            model.train()
-            train_epoch(model, optim, train_loader,
-                        lr_schedule, args.clip_grad)
-            # Check dev ppl
-            model.eval()
-            valid_bleu, valid_ppl = evaluate_ppl(model, valid_loader, epoch)
-            print(f"Validation perplexity: {valid_ppl:.2f}", flush=True)
-            # print(f"Validation bleu: {valid_bleu:.4f}", flush=True)
-            # Early stopping maybe
-            if valid_ppl < best_ppl:
-                best_ppl = valid_ppl
-                print(f"Saving new best model (epoch {epoch} ppl {valid_ppl})")
-                th.save(model.state_dict(), args.model_file)
-            else:
-                for param_group in optim.param_groups:
-                    param_group["lr"] *= args.lr_decay
+            with open('log.txt', 'w') as f:
+                print(f"----- Epoch {epoch} -----", flush=True)
+                # Train for one epoch
+                model.train()
+                train_epoch(model, optim, train_loader, criterion,
+                            lr_schedule, args.clip_grad)
+                # Check dev ppl
+                model.eval()
+                valid_bleu, valid_ppl = evaluate_ppl(model, valid_loader, epoch)
+                print(f"Validation perplexity: {valid_ppl:.2f}", flush=True)
+                print(f"Validation perplexity: {valid_ppl:.2f}", file=f, flush=True)
+                # print(f"Validation bleu: {valid_bleu:.4f}", flush=True)
+                # Early stopping maybe
+                if valid_ppl < best_ppl:
+                    best_ppl = valid_ppl
+                    print(f"Saving new best model (epoch {epoch} ppl {valid_ppl})")
+                    th.save(model.state_dict(), args.model_file)
+                else:
+                    for param_group in optim.param_groups:
+                        param_group["lr"] *= args.lr_decay
 
 
 if __name__ == "__main__":
