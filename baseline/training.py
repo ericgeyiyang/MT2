@@ -7,6 +7,7 @@ from transformer import Transformer
 from tqdm import tqdm
 import pdb
 
+
 # 3:2: 31.77, 1:1: 30.31
 def load_data(src_lang, tgt_lang, cached_folder="assignment2/data", overwrite=False):
     """Load data (and cache to file)"""
@@ -44,7 +45,7 @@ def get_args():
     parser = argparse.ArgumentParser("Train an MT model")
     # General params
     parser.add_argument("--seed", type=int, default=11731)
-    parser.add_argument("--src", type=str, default="en", choices=["af", "ts", "nso","en"])
+    parser.add_argument("--src", type=str, default="en", choices=["af", "ts", "nso", "en"])
     parser.add_argument("--tgt", type=str, default="af",
                         choices=["af", "ts", "nso", "en"])
     parser.add_argument("--model-file", type=str, default="model.pt")
@@ -80,18 +81,20 @@ def inverse_sqrt_schedule(warmup, lr0):
     # Trick for allowing warmup of 0
     warmup = max(warmup, 0.01)
     while True:
-        scale = min(1/sqrt(step+1e-20), step/sqrt(warmup**3))
+        scale = min(1 / sqrt(step + 1e-20), step / sqrt(warmup ** 3))
         step += 1
         yield lr0 * scale
 
-# reference from https://github.com/OpenNMT/OpenNMT-py/blob/e8622eb5c6117269bb3accd8eb6f66282b5e67d9/onmt/utils/loss.py#L186
+
+# reference from https://github.com/OpenNMT/OpenNMT-py/blob/e8622eb5c6117269bb3accd8eb6f66282b5e67d9/onmt/utils/loss
+# .py#L186
 class LabelSmoothingLoss(th.nn.Module):
     def __init__(self, label_smoothing, target_vocab_size, ignore_index=-1):
         self.ignore_index = ignore_index
         super(LabelSmoothingLoss, self).__init__()
         # label_smoothing is a small value
         smoothing_value = label_smoothing / (target_vocab_size - 1)
-        one_hot = th.full((target_vocab_size, ), smoothing_value)
+        one_hot = th.full((target_vocab_size,), smoothing_value)
         self.register_buffer("one_hot", one_hot.unsqueeze(0))
 
         self.confidence = 1 - label_smoothing
@@ -106,7 +109,6 @@ class LabelSmoothingLoss(th.nn.Module):
         model_prob.masked_fill_((target == self.ignore_index).unsqueeze(1), 0)
 
         return th.nn.functional.kl_div(output, model_prob, reduction='sum')
-
 
 
 def train_epoch(model, optim, dataloader, criterion, lr_schedule=None, clip_grad=5.0):
@@ -126,11 +128,12 @@ def train_epoch(model, optim, dataloader, criterion, lr_schedule=None, clip_grad
         # Negative log likelihood of the target tokens
         # (this selects log_p[i, b, tgt_tokens[i+1, b]]
         # for each batch b, position i)
+        # pdb.set_trace()
         nll = criterion(
             log_p.view(-1, log_p.size(-1)),
             tgt_tokens[1:].view(-1),
         )
-        nll /= sum(tgt_tokens[1:].view(-1)!=0)
+        nll /= (tgt_tokens[1:] != 0).sum()
         # nll = th.nn.functional.nll_loss(
         #     # Log probabilities (flattened to (l*b) x V)
         #     log_p.view(-1, log_p.size(-1)),
@@ -139,7 +142,7 @@ def train_epoch(model, optim, dataloader, criterion, lr_schedule=None, clip_grad
         #     # Don't compute the nll of padding tokens
         #     ignore_index=model.vocab["<pad>"],
         #     # Take the average
-        #     reduction="mean",
+        #     reduction="sum",
         # )
         # Perplexity (for logging)
         ppl = th.exp(nll).item()
@@ -263,7 +266,7 @@ def main():
         criterion = LabelSmoothingLoss(args.label_smoothing, len(vocab), ignore_index=vocab['<pad>'])
         if args.cuda:
             criterion = criterion.cuda()
-        for epoch in range(1, args.n_epochs+1):
+        for epoch in range(1, args.n_epochs + 1):
             with open('log.txt', 'w') as f:
                 print(f"----- Epoch {epoch} -----", flush=True)
                 # Train for one epoch
