@@ -22,7 +22,7 @@ def get_args():
     parser.add_argument("--cuda", action="store_true")
     parser.add_argument("--seed", type=int, default=15062019)
     # Model parameters
-    parser.add_argument("--n-layers", type=int, default=4)
+    parser.add_argument("--n-layers", type=int, default=6)
     parser.add_argument("--n-heads", type=int, default=4)
     parser.add_argument("--embed-dim", type=int, default=512)
     parser.add_argument("--hidden-dim", type=int, default=512)
