@@ -261,29 +261,35 @@ def main():
         # Train epochs
         best_ppl = 1e12
         criterion = LabelSmoothingLoss(args.label_smoothing, len(vocab), ignore_index=vocab['<pad>'])
-        if args.cuda:
-            criterion = criterion.cuda()
+        f = open('log.txt', 'w', buffering=1)
         for epoch in range(1, args.n_epochs+1):
-            with open('log.txt', 'w') as f:
-                print(f"----- Epoch {epoch} -----", flush=True)
-                # Train for one epoch
-                model.train()
-                train_epoch(model, optim, train_loader, criterion,
-                            lr_schedule, args.clip_grad)
-                # Check dev ppl
-                model.eval()
-                valid_bleu, valid_ppl = evaluate_ppl(model, valid_loader, epoch)
-                print(f"Validation perplexity: {valid_ppl:.2f}", flush=True)
-                print(f"Validation perplexity: {valid_ppl:.2f}", file=f, flush=True)
-                # print(f"Validation bleu: {valid_bleu:.4f}", flush=True)
-                # Early stopping maybe
-                if valid_ppl < best_ppl:
-                    best_ppl = valid_ppl
-                    print(f"Saving new best model (epoch {epoch} ppl {valid_ppl})")
-                    th.save(model.state_dict(), args.model_file)
-                else:
-                    for param_group in optim.param_groups:
-                        param_group["lr"] *= args.lr_decay
+            criterion = criterion.cuda()
+            print(f"----- Epoch {epoch} -----", flush=True)
+            # Train for one epoch
+            model.train()
+            train_epoch(model, optim, train_loader, criterion,
+                        lr_schedule, args.clip_grad)
+            # Check dev ppl
+            model.eval()
+            valid_bleu, valid_ppl = evaluate_ppl(model, valid_loader, epoch)
+            if valid_ppl < 9.0:
+                criterion = LabelSmoothingLoss(args.label_smoothing - 0.06, len(vocab), ignore_index=vocab['<pad>'])
+            elif valid_ppl < 12.0:
+                criterion = LabelSmoothingLoss(args.label_smoothing - 0.04, len(vocab), ignore_index=vocab['<pad>'])
+            elif valid_ppl < 15.0:
+                criterion = LabelSmoothingLoss(args.label_smoothing - 0.02, len(vocab), ignore_index=vocab['<pad>'])
+            print(f"Validation perplexity: {valid_ppl:.2f}", flush=True)
+            f.write(str(epoch) + "Validation perplexity: " + str(valid_ppl) + "\n")
+            # print(f"Validation bleu: {valid_bleu:.4f}", flush=True)
+            # Early stopping maybe
+            if valid_ppl < best_ppl:
+                best_ppl = valid_ppl
+                print(f"Saving new best model (epoch {epoch} ppl {valid_ppl})")
+                th.save(model.state_dict(), args.model_file)
+            else:
+                for param_group in optim.param_groups:
+                    param_group["lr"] *= args.lr_decay
+        f.close()
 
 
 if __name__ == "__main__":
